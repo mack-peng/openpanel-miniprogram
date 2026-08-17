@@ -1,6 +1,6 @@
 {
   "name": "openpanel-miniprogram",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "OpenPanel SDK for WeChat Mini Programs",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
