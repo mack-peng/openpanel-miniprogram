@@ -1,32 +1,87 @@
-import type {
-  OpenPanelOptions,
-  TrackHandlerPayload,
-  TrackProperties,
-  IdentifyPayload,
-  TrackPayload,
-  IncrementPayload,
-  DecrementPayload,
-  GroupPayload,
-  UpsertGroupPayload,
-  AssignGroupPayload,
-  AliasPayload,
-} from '@openpanel/sdk';
+export type IProfileId = string | number;
 
-export type {
-  AliasPayload,
-  AssignGroupPayload,
-  DecrementPayload,
-  GroupPayload,
-  IdentifyPayload,
-  IncrementPayload,
-  OpenPanelOptions,
-  TrackHandlerPayload,
-  TrackPayload,
-  TrackProperties,
-  UpsertGroupPayload,
-};
+export interface IGroupPayload {
+  id: string;
+  type: string;
+  name: string;
+  properties?: Record<string, unknown>;
+}
 
-/** wx.request style adapter — allows injecting custom request implementation */
+export interface IAssignGroupPayload {
+  groupIds: string[];
+  profileId?: IProfileId;
+}
+
+export interface ITrackPayload {
+  name: string;
+  properties?: Record<string, unknown>;
+  profileId?: IProfileId;
+  groups?: string[];
+}
+
+export interface IIdentifyPayload {
+  profileId: IProfileId;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  avatar?: string;
+  properties?: Record<string, unknown>;
+}
+
+export interface IIncrementPayload {
+  profileId: IProfileId;
+  property: string;
+  value?: number;
+}
+
+export interface IDecrementPayload {
+  profileId: IProfileId;
+  property: string;
+  value?: number;
+}
+
+export interface IAliasPayload {
+  profileId: IProfileId;
+  alias: string;
+}
+
+export type ITrackHandlerPayload =
+  | { type: 'track'; payload: ITrackPayload }
+  | { type: 'identify'; payload: IIdentifyPayload }
+  | { type: 'increment'; payload: IIncrementPayload }
+  | { type: 'decrement'; payload: IDecrementPayload }
+  | { type: 'alias'; payload: IAliasPayload }
+  | { type: 'group'; payload: IGroupPayload }
+  | { type: 'assign_group'; payload: IAssignGroupPayload };
+
+export type AliasPayload = IAliasPayload;
+export type AssignGroupPayload = IAssignGroupPayload;
+export type DecrementPayload = IDecrementPayload;
+export type GroupPayload = IGroupPayload;
+export type IdentifyPayload = IIdentifyPayload;
+export type IncrementPayload = IIncrementPayload;
+export type TrackHandlerPayload = ITrackHandlerPayload;
+export type TrackPayload = ITrackPayload;
+export type UpsertGroupPayload = GroupPayload;
+
+export interface TrackProperties {
+  [key: string]: unknown;
+  profileId?: string;
+  groups?: string[];
+}
+
+export interface OpenPanelOptions {
+  clientId: string;
+  clientSecret?: string;
+  apiUrl?: string;
+  sdkVersion?: string;
+  waitForProfile?: boolean;
+  filter?: (payload: TrackHandlerPayload) => boolean;
+  disabled?: boolean;
+  debug?: boolean;
+}
+
+/** wx.request style adapter */
 export interface WxRequestAdapter {
   request(options: {
     url: string;
@@ -38,7 +93,7 @@ export interface WxRequestAdapter {
   }): void;
 }
 
-/** Storage adapter interface (synchronous, matching wx.storage API) */
+/** Storage adapter (synchronous, matching wx.storage API) */
 export interface StorageAdapter {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -47,10 +102,7 @@ export interface StorageAdapter {
 
 /** Options for the miniprogram OpenPanel client */
 export interface MiniprogramOpenPanelOptions extends OpenPanelOptions {
-  /** Custom request adapter. Defaults to wx.request */
   requestAdapter?: WxRequestAdapter;
-  /** Custom storage adapter. Defaults to wx.getStorageSync / wx.setStorageSync */
   storageAdapter?: StorageAdapter;
-  /** Auto-install Page/App onShow tracking. Defaults to true */
   autoTrackPageView?: boolean;
 }

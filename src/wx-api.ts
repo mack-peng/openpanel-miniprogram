@@ -2,7 +2,7 @@ import type { WxRequestAdapter } from './types';
 
 interface WxApiConfig {
   baseUrl: string;
-  defaultHeaders?: Record<string, string | Promise<string | null>>;
+  defaultHeaders?: Record<string, string>;
   maxRetries?: number;
   initialRetryDelay?: number;
   requestAdapter: WxRequestAdapter;
@@ -15,7 +15,7 @@ interface FetchOptions {
 
 export class WxApi {
   private baseUrl: string;
-  private headers: Record<string, string | Promise<string | null>>;
+  private headers: Record<string, string>;
   private maxRetries: number;
   private initialRetryDelay: number;
   private requestAdapter: WxRequestAdapter;
@@ -24,25 +24,14 @@ export class WxApi {
     this.baseUrl = config.baseUrl;
     this.headers = {
       'Content-Type': 'application/json',
-      ...config.defaultHeaders,
+      ...(config.defaultHeaders || {}),
     };
-    this.maxRetries = config.maxRetries ?? 3;
-    this.initialRetryDelay = config.initialRetryDelay ?? 500;
+    this.maxRetries = config.maxRetries || 3;
+    this.initialRetryDelay = config.initialRetryDelay || 500;
     this.requestAdapter = config.requestAdapter;
   }
 
-  private async resolveHeaders(): Promise<Record<string, string>> {
-    const resolved: Record<string, string> = {};
-    for (const [key, value] of Object.entries(this.headers)) {
-      const v = await value;
-      if (v !== null) {
-        resolved[key] = v;
-      }
-    }
-    return resolved;
-  }
-
-  public addHeader(key: string, value: string | Promise<string | null>) {
+  public addHeader(key: string, value: string) {
     this.headers[key] = value;
   }
 
@@ -69,26 +58,25 @@ export class WxApi {
     attempt: number,
   ): Promise<ResBody | null> {
     try {
-      const header = await this.resolveHeaders();
       const res = await this.wxRequest(
         url,
         data ? JSON.stringify(data) : '',
-        header,
+        this.headers,
       );
 
       if (res.statusCode === 401) return null;
 
       if (res.statusCode !== 200 && res.statusCode !== 202) {
-        throw new Error(`HTTP error! status: ${res.statusCode}`);
+        throw new Error('HTTP error! status: ' + res.statusCode);
       }
 
       if (typeof res.data === 'string') {
         return res.data ? JSON.parse(res.data) : null;
       }
-      return (res.data as ResBody) ?? null;
+      return res.data || null;
     } catch (error) {
       if (attempt < this.maxRetries) {
-        const delay = this.initialRetryDelay * 2 ** attempt;
+        const delay = this.initialRetryDelay * Math.pow(2, attempt);
         await new Promise((resolve) => setTimeout(resolve, delay));
         return this.post<ReqBody, ResBody>(url, data, attempt + 1);
       }
@@ -102,7 +90,7 @@ export class WxApi {
     data: ReqBody,
     _options?: FetchOptions,
   ): Promise<ResBody | null> {
-    const url = `${this.baseUrl}${path}`;
+    const url = this.baseUrl + path;
     return this.post<ReqBody, ResBody>(url, data, 0);
   }
 }

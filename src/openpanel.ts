@@ -1,12 +1,16 @@
-import type {
-  OpenPanelOptions,
-  TrackHandlerPayload,
-  TrackProperties,
-} from '@openpanel/sdk';
-import { OpenPanel as OpenPanelBase } from '@openpanel/sdk';
 import { WxApi } from './wx-api';
 import { defaultStorageAdapter } from './storage';
-import type { MiniprogramOpenPanelOptions, StorageAdapter } from './types';
+import type {
+  MiniprogramOpenPanelOptions,
+  StorageAdapter,
+  TrackHandlerPayload,
+  TrackProperties,
+  IdentifyPayload,
+  UpsertGroupPayload,
+  IncrementPayload,
+  DecrementPayload,
+  ITrackHandlerPayload,
+} from './types';
 
 declare const PKG_VERSION: string;
 
@@ -35,17 +39,25 @@ const QUEUE_STORAGE_KEY = 'openpanel_offline_queue';
 const DEVICE_ID_KEY = 'openpanel_device_id';
 const SESSION_ID_KEY = 'openpanel_session_id';
 
-export class OpenPanel extends OpenPanelBase {
+export class OpenPanel {
+  private api: WxApi;
+  private options: MiniprogramOpenPanelOptions;
+  private profileId?: string | number;
+  private groups: string[] = [];
+  private deviceId?: string;
+  private sessionId?: string;
+  private globalProps?: Record<string, unknown>;
+  private queue: TrackHandlerPayload[] = [];
   private storage: StorageAdapter;
   private isOnline = true;
   private networkListener?: (res: { isConnected: boolean }) => void;
 
-  constructor(public options: MiniprogramOpenPanelOptions) {
-    super({
+  constructor(options: MiniprogramOpenPanelOptions) {
+    this.options = {
+      apiUrl: 'https://api.openpanel.dev',
+      sdkVersion: PKG_VERSION,
       ...options,
-      sdk: 'miniprogram',
-      sdkVersion: options.sdkVersion || PKG_VERSION,
-    });
+    };
 
     const requestAdapter =
       options.requestAdapter ||
@@ -60,16 +72,15 @@ export class OpenPanel extends OpenPanelBase {
       );
     }
 
-    // Replace the base Api with our wx.request-based implementation
-    (this as any).api = new WxApi({
-      baseUrl: options.apiUrl || 'https://api.openpanel.dev',
+    this.api = new WxApi({
+      baseUrl: this.options.apiUrl!,
       defaultHeaders: {
         'openpanel-client-id': options.clientId,
         ...(options.clientSecret
           ? { 'openpanel-client-secret': options.clientSecret }
           : {}),
         'openpanel-sdk-name': 'miniprogram',
-        'openpanel-sdk-version': options.sdkVersion || PKG_VERSION,
+        'openpanel-sdk-version': this.options.sdkVersion!,
       },
       requestAdapter,
     });
@@ -81,6 +92,234 @@ export class OpenPanel extends OpenPanelBase {
     this.loadPersistedState();
   }
 
+  ready() {
+    this.options.disabled = false;
+    this.options.waitForProfile = false;
+    this.flush();
+  }
+
+  private shouldQueue(payload: TrackHandlerPayload): boolean {
+    if (this.options.disabled) return true;
+    if (this.options.waitForProfile && !this.profileId) return true;
+    return false;
+  }
+
+  private addQueue(payload: TrackHandlerPayload) {
+    if (payload.type === 'track') {
+      payload.payload.properties = {
+        ...(payload.payload.properties || {}),
+        __timestamp: new Date().toISOString(),
+      };
+    }
+    this.queue.push(payload);
+    this.persistQueue();
+  }
+
+  private async send(payload: TrackHandlerPayload) {
+    if (this.options.filter && !this.options.filter(payload)) {
+      return null;
+    }
+
+    if (this.shouldQueue(payload)) {
+      this.addQueue(payload);
+      return null;
+    }
+
+    if (!this.isOnline) {
+      this.addQueue(payload);
+      return null;
+    }
+
+    const result = await this.api.fetch<
+      TrackHandlerPayload,
+      { deviceId: string; sessionId: string }
+    >('/track', payload);
+
+    if (result) {
+      this.deviceId = result.deviceId;
+      const hadSession = !!this.sessionId;
+      this.sessionId = result.sessionId;
+      this.persistIds();
+      this.persistQueue();
+
+      if (!hadSession && this.sessionId) {
+        this.flush();
+      }
+    }
+
+    return result;
+  }
+
+  setGlobalProperties(properties: Record<string, unknown>) {
+    this.globalProps = {
+      ...(this.globalProps || {}),
+      ...properties,
+    };
+  }
+
+  track(name: string, properties?: TrackProperties) {
+    this.log('track event', name, properties);
+    const { groups: groupsOverride, profileId, ...rest } = properties || {};
+    const mergedGroups = [
+      ...new Set([...this.groups, ...(groupsOverride || [])]),
+    ];
+    return this.send({
+      type: 'track',
+      payload: {
+        name,
+        profileId: profileId || this.profileId,
+        groups: mergedGroups.length > 0 ? mergedGroups : undefined,
+        properties: {
+          ...(this.globalProps || {}),
+          ...rest,
+        },
+      },
+    });
+  }
+
+  identify(payload: IdentifyPayload) {
+    this.log('identify user', payload);
+    if (payload.profileId) {
+      this.profileId = payload.profileId;
+      this.flush();
+    }
+
+    if (payload.profileId && Object.keys(payload).length > 1) {
+      return this.send({
+        type: 'identify',
+        payload: {
+          ...payload,
+          properties: {
+            ...(this.globalProps || {}),
+            ...payload.properties,
+          },
+        },
+      });
+    }
+  }
+
+  upsertGroup(payload: UpsertGroupPayload) {
+    this.log('upsert group', payload);
+    return this.send({ type: 'group', payload });
+  }
+
+  setGroup(groupId: string) {
+    this.log('set group', groupId);
+    if (!this.groups.includes(groupId)) {
+      this.groups = [...this.groups, groupId];
+    }
+    return this.send({
+      type: 'assign_group',
+      payload: { groupIds: [groupId], profileId: this.profileId },
+    });
+  }
+
+  setGroups(groupIds: string[]) {
+    this.log('set groups', groupIds);
+    this.groups = [...new Set([...this.groups, ...groupIds])];
+    return this.send({
+      type: 'assign_group',
+      payload: { groupIds, profileId: this.profileId },
+    });
+  }
+
+  increment(payload: IncrementPayload) {
+    return this.send({ type: 'increment', payload });
+  }
+
+  decrement(payload: DecrementPayload) {
+    return this.send({ type: 'decrement', payload });
+  }
+
+  revenue(amount: number, properties?: TrackProperties & { deviceId?: string }) {
+    const deviceId = properties?.deviceId;
+    if (properties) delete properties.deviceId;
+    return this.track('revenue', {
+      ...(properties || {}),
+      ...(deviceId ? { __deviceId: deviceId } : {}),
+      __revenue: amount,
+    });
+  }
+
+  getDeviceId(): string {
+    return this.deviceId || '';
+  }
+
+  getSessionId(): string {
+    return this.sessionId || '';
+  }
+
+  clear() {
+    this.profileId = undefined;
+    this.groups = [];
+    this.deviceId = undefined;
+    this.sessionId = undefined;
+  }
+
+  private buildFlushPayload(item: TrackHandlerPayload) {
+    if (item.type === 'track') {
+      const queuedGroups = item.payload.groups || [];
+      const mergedGroups = [...new Set([...this.groups, ...queuedGroups])];
+      return {
+        ...item.payload,
+        profileId: item.payload.profileId || this.profileId,
+        groups: mergedGroups.length > 0 ? mergedGroups : undefined,
+      };
+    }
+    if (
+      item.type === 'identify' ||
+      item.type === 'increment' ||
+      item.type === 'decrement'
+    ) {
+      return {
+        ...item.payload,
+        profileId: item.payload.profileId || this.profileId,
+      };
+    }
+    if (item.type === 'assign_group') {
+      return {
+        ...item.payload,
+        profileId: item.payload.profileId || this.profileId,
+      };
+    }
+    return item.payload;
+  }
+
+  flush() {
+    if (!this.isOnline) return;
+    const remaining: TrackHandlerPayload[] = [];
+    for (const item of this.queue) {
+      if (this.shouldQueue(item)) {
+        remaining.push(item);
+        continue;
+      }
+      const payload = this.buildFlushPayload(item);
+      this.send({ ...item, payload } as TrackHandlerPayload);
+    }
+    this.queue = remaining;
+    this.persistQueue();
+  }
+
+  screenView(pagePath: string, properties?: Record<string, unknown>) {
+    return this.track('screen_view', {
+      __path: pagePath,
+      ...properties,
+    });
+  }
+
+  destroy() {
+    if (this.networkListener && typeof wx !== 'undefined') {
+      try {
+        wx.offNetworkStatusChange(this.networkListener);
+      } catch {
+        // ignore
+      }
+    }
+    this.networkListener = undefined;
+  }
+
+  // --- miniprogram-specific private methods ---
+
   private setDefaultProperties() {
     if (typeof wx === 'undefined') return;
     try {
@@ -90,7 +329,7 @@ export class OpenPanel extends OpenPanelBase {
         __os: info.platform,
         __model: info.model,
         __system: info.system,
-        __screen: `${info.screenWidth}x${info.screenHeight}`,
+        __screen: info.screenWidth + 'x' + info.screenHeight,
         __wxVersion: info.version,
         __sdkVersion: info.SDKVersion,
       });
@@ -131,7 +370,7 @@ export class OpenPanel extends OpenPanelBase {
       if (stored) {
         const items = JSON.parse(stored);
         if (Array.isArray(items) && items.length > 0) {
-          this.queue = [...items, ...this.queue];
+          this.queue = items.concat(this.queue);
           this.flush();
         }
       }
@@ -161,52 +400,9 @@ export class OpenPanel extends OpenPanelBase {
     }
   }
 
-  addQueue(payload: TrackHandlerPayload) {
-    super.addQueue(payload);
-    this.persistQueue();
-  }
-
-  async send(payload: TrackHandlerPayload) {
-    if (this.options.filter && !this.options.filter(payload)) {
-      return null;
+  private log(...args: any[]) {
+    if (this.options.debug) {
+      console.log('[openpanel-miniprogram]', ...args);
     }
-
-    if (!this.isOnline) {
-      this.addQueue(payload);
-      return null;
-    }
-
-    const result = await super.send(payload);
-
-    if (result) {
-      this.persistIds();
-      this.persistQueue();
-    }
-
-    return result;
-  }
-
-  flush() {
-    if (!this.isOnline) return;
-    super.flush();
-    this.persistQueue();
-  }
-
-  screenView(pagePath: string, properties?: Record<string, unknown>) {
-    return this.track('screen_view', {
-      __path: pagePath,
-      ...properties,
-    });
-  }
-
-  destroy() {
-    if (this.networkListener && typeof wx !== 'undefined') {
-      try {
-        wx.offNetworkStatusChange(this.networkListener);
-      } catch {
-        // ignore
-      }
-    }
-    this.networkListener = undefined;
   }
 }

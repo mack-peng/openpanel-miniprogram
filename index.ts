@@ -14,4 +14,5 @@ export type {
   TrackPayload,
   TrackProperties,
   UpsertGroupPayload,
+  OpenPanelOptions,
 } from './src/types';

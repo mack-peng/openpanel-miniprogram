@@ -8,6 +8,7 @@ export default defineConfig({
   sourcemap: false,
   clean: true,
   minify: true,
+  target: 'es2018',
   define: {
     PKG_VERSION: JSON.stringify(process.env.npm_package_version || '0.1.0'),
   },
