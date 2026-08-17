@@ -108,13 +108,22 @@ op.getSessionId()   // get persisted session ID
 
 ## Auto Tracking (Optional)
 
-Automatically track `screen_view` on every `Page.onShow` and `app_show`/`app_hide` on `App`:
+Automatically track common scenarios with per-event switches (all enabled by default):
+
+| Event | Trigger | Properties |
+|-------|---------|------------|
+| `screen_view` | every `Page.onShow` | `__path` page path |
+| `app_launch` | `App.onLaunch` | `__scene` / `__query` / `__path` from `wx.getLaunchOptionsSync()` |
+| `page_share` | `onShareAppMessage` / `onShareTimeline` | `__path` page path, `__entry` (`menu` / `timeline`) |
 
 ```typescript
 import { OpenPanel, installAutoTracking } from 'openpanel-miniprogram';
 
 const op = new OpenPanel({ clientId: 'YOUR_CLIENT_ID' });
-installAutoTracking(op);
+installAutoTracking(op); // all events on
+
+// disable specific events
+installAutoTracking(op, { events: { screen_view: false } });
 ```
 
 ## Offline Support

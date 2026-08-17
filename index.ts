@@ -1,5 +1,6 @@
 export { OpenPanel } from './src/openpanel';
 export { installAutoTracking } from './src/auto-track';
+export type { AutoTrackEvents } from './src/auto-track';
 export type {
   MiniprogramOpenPanelOptions,
   WxRequestAdapter,
