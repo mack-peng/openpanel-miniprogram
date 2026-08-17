@@ -104,5 +104,4 @@ export interface StorageAdapter {
 export interface MiniprogramOpenPanelOptions extends OpenPanelOptions {
   requestAdapter?: WxRequestAdapter;
   storageAdapter?: StorageAdapter;
-  autoTrackPageView?: boolean;
 }
