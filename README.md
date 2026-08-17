@@ -108,23 +108,39 @@ op.getSessionId()   // get persisted session ID
 
 ## Auto Tracking (Optional)
 
-Automatically track common scenarios with per-event switches (all enabled by default):
+Automatically track common scenarios with per-event switches. **All events are enabled by default**, disable individually as needed.
 
-| Event | Trigger | Properties |
-|-------|---------|------------|
-| `screen_view` | every `Page.onShow` | `__path` page path |
-| `app_launch` | `App.onLaunch` | `__scene` / `__query` / `__path` from `wx.getLaunchOptionsSync()` |
-| `page_share` | `onShareAppMessage` / `onShareTimeline` | `__path` page path, `__entry` (`menu` / `timeline`) |
+| Event | Trigger | Properties | Semantics |
+|-------|---------|------------|-----------|
+| `screen_view` | every `Page.onShow` | `__path` page path | Fires on every page show, including hot start re-entry |
+| `app_launch` | `App.onLaunch` | `__scene` / `__query` / `__path` from `wx.getLaunchOptionsSync()` | Fires **once per cold start** (new process). Hot start (background → foreground) triggers `onShow` only, so it does NOT re-fire. `__scene` is the WeChat scene value (scan / share / search entry etc.) |
+| `page_share` | `onShareAppMessage` / `onShareTimeline` | `__path` page path, `__entry` (`menu` / `timeline`) | Fires when the share panel opens. WeChat cannot confirm whether the share actually completed, so treat it as a share-intent metric |
+
+### Configuration
 
 ```typescript
 import { OpenPanel, installAutoTracking } from 'openpanel-miniprogram';
 
 const op = new OpenPanel({ clientId: 'YOUR_CLIENT_ID' });
-installAutoTracking(op); // all events on
+installAutoTracking(op); // all events on (default)
 
 // disable specific events
 installAutoTracking(op, { events: { screen_view: false } });
+installAutoTracking(op, { events: { screen_view: false, page_share: false } });
+
+// advanced: resolve page path / add extra properties
+installAutoTracking(op, {
+  resolvePath: page => page.route || 'unknown',
+  extraProperties: { source: 'home' },
+  events: { app_launch: true },
+});
 ```
+
+How auto tracking works:
+
+- Wraps the global `App()` / `Page()` registrations at install time, so **call it before `App({...})` / `Page({...})`** are registered
+- Disabled events are not wrapped at all — no intercept, no overhead
+- `screen_view` wraps `Page.onShow` and still calls your original `onShow`; `app_launch` wraps `App.onLaunch`; `page_share` wraps the share handlers and still returns your original share config
 
 ## Offline Support
 
